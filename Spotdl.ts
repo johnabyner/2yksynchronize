@@ -1,98 +1,167 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 
-const spotdlPath = path.resolve("./.venv/bin/spotdl");
-class Spotdl{
-    static async metadataList(url:string, outputPath:string): Promise<void>{
+const spotdlPath = path.resolve('./.venv/bin/spotdl');
+
+class Spotdl {
+    private static runCommand(args: string[]): Promise<void> {
         return new Promise((resolve, reject) => {
-            const saveFilePath = path.join(outputPath, `{list-name}.spotdl`)
-            // Argumentos separados corretamente no Array
-            const args = ['save', url, '--save-file',saveFilePath];
-
             const spotdl = spawn(spotdlPath, args);
 
-            //in case of error
-            spotdl.stderr.on('data', (data:any) =>{
-                console.error(`stderr: ${data}`);
-            })
+            spotdl.stderr.on('data', (data: Buffer) => {
+                console.error(`stderr: ${data.toString()}`);
+            });
 
-            //in the end
-            spotdl.on('close', (code:number | null) => {
-                if(code === 0){
-                    console.log('metadata gerada com sucesso');
+            spotdl.on('close', (code: number | null) => {
+                if (code === 0) {
+                    console.log('Download completed successfully.');
                     resolve();
-                }else{
-                    const err = new Error(`spotDL finalizou com código de erro ${code}`);
-                    console.error(err.message);
-                    reject(err);
+                    return;
                 }
-            }) 
-        })
+
+                const error = new Error(
+                    `spotDL exited with error code ${code}`
+                );
+
+                console.error(error.message);
+                reject(error);
+            });
+
+            spotdl.on('error', (error) => {
+                reject(error);
+            });
+        });
     }
 
-    static async download(url: string, outputPath:string): Promise<void>{
-        //track
-        //playlist
-        //album
-        //artist
-        return new Promise((resolve, reject) => {
-            const spotdlFilePath = path.join(outputPath, 'metadata.spotdl');
-            const outputAudio = path.join(outputPath, '{list-name}', '{artist}-{title}.{ext}');
-            const args = ['download',url,'--save-file', spotdlFilePath,'--output',outputAudio];
-            
-            const spotdl = spawn(spotdlPath, args);
+    static async metadataList(
+        url: string,
+        outputPath: string
+    ): Promise<void> {
+        const saveFilePath = path.join(
+            outputPath,
+            'metadata.spotdl'
+        );
 
-            spotdl.stderr.on('data', (data:any) =>{
-                console.error(`stderr: ${data}`);
-            })
-
-            spotdl.on('close', (code:number | null) =>{
-                if(code===0){
-                    console.log(`download gerado com sucesso`);
-                    resolve();
-                }else{
-                    const err = new Error(`spotdl finalizou com com codigo de erro ${code}`);
-                    console.error(err.message);
-                    reject(err);
-                }
-            })
-        })
+        try {
+            await this.runCommand([
+                'save',
+                url,
+                '--save-file',
+                saveFilePath,
+                '--threads',
+                '8',
+            ]);
+        } catch (error) {
+            console.error('Failed to generate metadata:', error);
+        }
     }
 
-    static async downloadSyncronized(folderPath: string, outputPath:string): Promise<void>{
-        return new Promise((resolve, reject)=>{
-            const spotdlFilePath = path.join(folderPath, 'metadata.spotdl');
-            const outputAudio = path.join(outputPath, '{list-name}', '{artist}-{title}.{ext}');
-        
-            const args = ['sync', spotdlFilePath, '--save-file', spotdlFilePath, '--output', outputAudio];
-            const spotdl = spawn(spotdlPath, args);
+    static async download(
+        url: string,
+        outputPath: string
+    ): Promise<void> {
+        const spotdlFilePath = path.join(
+            outputPath,
+            'metadata.spotdl'
+        );
 
-            spotdl.stderr.on('data', (data:any) => {
-                console.error(`stderr: ${data}`);
-            })
+        const outputAudio = path.join(
+            outputPath,
+            '{list-name}',
+            '{artist}-{title}'
+        );
 
-            spotdl.on('close', (code:number | null) =>{
-                if(code===0){
-                    console.log(`Download gerado com sucesso`);
-                    resolve();
-                }else{
-                    const err = new Error(`spotdl finalizou com codigo de erro ${code}`);
-                    console.error(err.message);
-                    reject(err);
-                }
-            })
-        })
-    } 
-
-
-    //colocar threads acima
-    static async getAlbumsFromFolder(folderPath:string): Promise<void>{
-        // não baixar o mesmo álbum duas vezes, e outra para verificar se o álbum já existe
+        try {
+            await this.runCommand([
+                'download',
+                url,
+                '--save-file',
+                spotdlFilePath,
+                '--output',
+                outputAudio,
+                '--threads',
+                '8',
+            ]);
+        } catch (error) {
+            console.error('Failed to download music:', error);
+        }
     }
 
-    static async downloadAlbuns(albums:any){
-        //vai pegar o file e ler com stream
-    } 
+    static async downloadSynchronized(
+        folderPath: string,
+        outputPath: string
+    ): Promise<void> {
+        const spotdlFilePath = path.join(
+            folderPath,
+            'metadata.spotdl'
+        );
+
+        const outputAudio = path.join(
+            outputPath,
+            '{list-name}',
+            '{artist}-{title}'
+        );
+
+        try {
+            await this.runCommand([
+                'sync',
+                spotdlFilePath,
+                '--output',
+                outputAudio,
+                '--threads',
+                '8',
+            ]);
+        } catch (error) {
+            console.error('Failed to synchronize music:', error);
+        }
+    }
+
+    static async downloadLyrics(folderPath: string): Promise<void> {
+        const files = await fs.readdir(folderPath);
+
+        const audioExtensions = [
+            '.mp3',
+            '.flac',
+            '.m4a',
+            '.wav',
+            '.ogg',
+        ];
+
+        const hasMusic = files.some((file) =>
+            audioExtensions.includes(
+                path.extname(file).toLowerCase()
+            )
+        );
+
+        if (!hasMusic) {
+            console.log('No music files were found in the folder.');
+            return;
+        }
+
+        try {
+            await this.runCommand([
+                'meta',
+                folderPath,
+                '--generate-lrc',
+                '--lyrics',
+                'synced',
+                'genius',
+            ]);
+        } catch (error) {
+            console.error('Failed to download lyrics:', error);
+        }
+    }
+
+    // Future features:
+    //
+    // static async getAlbumsFromFolder(folderPath: string): Promise<void> {
+    //     // Detect albums that have not been downloaded yet.
+    // }
+    //
+    // static async downloadAlbums(albums: string[]): Promise<void> {
+    //     // Download the detected albums.
+    // }
 }
 
-export default Spotdl
+export default Spotdl;
